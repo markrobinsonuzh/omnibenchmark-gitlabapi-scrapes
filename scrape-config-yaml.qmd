@@ -1,0 +1,137 @@
+---
+title: "scrape-config-yaml"
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# R libs
+
+```{r}
+library(reticulate)
+library(DT)
+use_python("~/opt/miniconda3/envs/omb/bin/python3.9")
+```
+
+## Python imports
+
+```{python}
+import os
+import base64
+import gitlab
+import pandas as pd
+import re
+from dfply import *
+import yaml
+```
+
+
+## Read private token
+
+N.B.: gitlab token must be stored (alone) in a file called `.token`.
+
+```{python}
+tf = open(".token", "r")
+token = tf.read().rstrip()
+tf.close()
+
+n = len(token)
+print(token[0:5], "...", token[n-5:n], sep="")
+```
+
+## Vars to define what we want to scrape
+
+
+```{python}
+target = "src/config.yaml"
+target_path = "src"
+search_terms = ["omni", "omb", "batch", "cluster"]
+target_branches = ["master","main"]
+```
+
+
+## Grab a set of projects according to search terms
+
+```{python}
+gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
+print(gl.api_url)
+
+projects = []
+for term in search_terms:
+    projects.extend(gl.projects.list(get_all=True, search=term,
+                                     order_by="last_activity_at", per_page=100))
+
+print(len(projects))
+
+# get unique list
+projects_uniq = []
+for item in projects:
+    if item not in projects_uniq:
+        projects_uniq.append(item)
+
+print(len(projects_uniq))
+```
+
+## Grab stuff out of every project
+
+In this example, look only into certain branches, parse the `src/config.yaml` file and pull out some keywords.
+
+```{python}
+z = [None] * len(projects_uniq)
+
+for i in range(len(projects_uniq)):
+    p = projects_uniq[i]
+    bs = p.branches.list(get_all=True)
+    bb = [b.name for b in bs if b.name in target_branches]
+    if len(bb)==0:
+        continue
+    br = bb[0]
+    fs = p.repository_tree(path=target_path, ref=br)
+    cy = [f["path"] for f in fs if f["path"] == target]
+    cy = ''.join(cy)
+    dkw = ''
+    ikw = ''
+    dn = ''
+    bmn = ''
+    url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
+    url = re.sub(".git$","", url)
+    if(cy == target):
+        f = p.files.get(file_path=target, ref=br)
+        fc = base64.b64decode(f.content).decode("utf-8")
+        fc = fc.replace('\\n', '\n')
+        dct = yaml.safe_load(fc)
+        bmn = ''.join(dct["benchmark_name"])
+        dkw = ''.join(dct["data"]["keywords"])
+        dn = ''.join(dct["data"]["name"])
+        if 'inputs' in dct.keys():
+            if 'keywords' in dct["inputs"].keys():
+                ikw = ''.join(dct["inputs"]["keywords"])
+    z[i] = [p.id, url, br, cy, bmn, dn, dkw, ikw]
+
+# get clean list
+z_clean = []
+for item in z:
+    if item is not None:
+        z_clean.append(item)
+
+print(len(z_clean))
+```
+
+
+## Format into a pandas DataFrame and have a look
+
+```{python}
+df = pd.DataFrame(z_clean, columns=['id','url_snippet','branch', 'configyaml',
+                  'benchmark_name', 'data_name', 'data_keywords', 'input_keywords'])
+df.to_csv("omni_repos.csv", index=False)
+df = df >> mask(X.configyaml == target) >> drop(X.configyaml)
+
+print(df >> arrange(X.benchmark_name, X.data_keywords))
+```
+
+```{r}
+DT::datatable(py$df)
+```
+
