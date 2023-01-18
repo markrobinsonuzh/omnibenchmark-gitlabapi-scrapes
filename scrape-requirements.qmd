@@ -89,7 +89,7 @@ for i in range(len(projects_uniq)):
     if len(bb)==0:
         continue
     br = bb[0]
-    fs = p.repository_tree(path=target_path, ref=br)
+    fs = p.repository_tree(path=target_path, ref=br, all=True)
     cy = [f["path"] for f in fs if f["path"] == target]
     cy = ''.join(cy)
     dkw = ''
