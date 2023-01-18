@@ -92,12 +92,9 @@ for i in range(len(projects_uniq)):
     fs = p.repository_tree(path=target_path, ref=br, all=True)
     cy = [f["path"] for f in fs if f["path"] == target]
     cy = ''.join(cy)
-    dkw = ''
-    ikw = ''
-    dn = ''
-    bmn = ''
     url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
     url = re.sub(".git$","", url)
+    ver=""; fc = ""
     if(cy == target):
         f = p.files.get(file_path=target, ref=br)
         fc = base64.b64decode(f.content).decode("utf-8")
@@ -105,10 +102,10 @@ for i in range(len(projects_uniq)):
         pkgs_list = fc.split("\n")
         ver = [pkg.split("==") for pkg in pkgs_list if target_pkg in pkg]
         # ver = [pkg.split(r"[>=]=") for pkg in pkgs_list if target_pkg in pkg]
-        if(len(ver)==0):
-            ver=""
-        else:
+        if(len(ver)>0):
             ver = ver[0][1]
+        else:
+            ver = ""
     z[i] = [p.id, url, br, ver, fc]
 
 # get clean list
@@ -127,7 +124,7 @@ print(len(z_clean))
 pd.options.display.max_colwidth = 60
 df = pd.DataFrame(z_clean, columns=['id','url_snippet','branch', 'omnibenchmark_version',
                   'requirements_list'])
-df = df.drop(df[df['omnibenchmark_version']==""].index)
+df = df[df['omnibenchmark_version']!=""]
 
 print(df >> arrange(X.omnibenchmark_version))
 ```
