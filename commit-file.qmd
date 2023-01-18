@@ -1,0 +1,192 @@
+---
+title: "commit-file"
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# R libs
+
+```{r}
+library(reticulate)
+library(DT)
+use_python("~/opt/miniconda3/envs/omb/bin/python3.9")
+```
+
+## Python imports
+
+```{python}
+import os
+import base64
+import gitlab
+import pandas as pd
+import re
+from dfply import *
+import yaml
+from datetime import datetime
+```
+
+
+## Read private token
+
+N.B.: gitlab token must be stored (alone) in a file called `.token`.
+
+```{python}
+tf = open(".token", "r")
+token = tf.read().rstrip()
+tf.close()
+
+n = len(token)
+print(token[0:5], "...", token[n-5:n], sep="")
+```
+
+## Vars to define what we want to scrape
+
+
+```{python}
+target = "requirements.txt"
+target_path = "."
+search_term = ["api_test2"]
+target_branches = ["master","main"]
+target_pkg = "omnibenchmark"
+
+
+# datetime object containing current date and time
+now = datetime.now()
+print("now =", now)
+dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
+# https://www.programiz.com/python-programming/datetime/current-datetime
+```
+
+
+## Grab a set of projects according to search terms
+
+```{python}
+gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
+print(gl.api_url)
+
+p = gl.projects.list(get_all=True, search=search_term,
+                     order_by="last_activity_at", per_page=100)
+                              
+len(p)
+p = p[0]
+```
+
+## Grab stuff out of every project
+
+In this example, look only into a test repo, delete a file, add a file (from local), update a file, look at list of commits.
+
+```{python}
+
+bs = p.branches.list(get_all=True)
+bb = [b.name for b in bs if b.name in target_branches]
+br = bb[0]
+
+fs = p.repository_tree(path=target_path, ref=br, all=True)
+
+
+cy = [f["path"] for f in fs if f["path"] == target]
+cy = ''.join(cy)
+
+url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
+url = re.sub(".git$","", url)
+
+
+f = p.files.get(file_path=target, ref=br)
+fc = base64.b64decode(f.content).decode("utf-8")
+
+print(fc)
+```
+
+
+
+## Try deleting a file
+
+```{python}
+data = {
+    'branch': br,
+    'commit_message': 'delete README.md: ' + dt_string,
+    'actions': [
+        {
+            'action': 'delete',
+            'file_path': 'README.md',
+        }
+    ]
+}
+
+commit = p.commits.create(data)
+print(commit.id)
+```
+
+
+## Try adding a file
+
+```{python}
+data = {
+    'branch': br,
+    'commit_message': 'add back README.md: ' + dt_string,
+    'actions': [
+        {
+            'action': 'create',
+            'file_path': 'README.md',
+            'content': open('README.md').read(), # NOTE: local file
+        }
+    ]
+}
+
+commit = p.commits.create(data)
+print(commit.id)
+```
+
+
+## Try updating a file
+
+```{python}
+print(cy)
+
+# manipulate version numbers
+fcs = [pkg.split("==") for pkg in fc.split("\n")]
+
+for i in range(len(fcs)):
+    print(fcs[i][0])
+    if(fcs[i][0] == target_pkg):
+        fcs[i][1] = '0.0.39'
+      
+fc_adj = "\n".join(["==".join(ii) for ii in fcs])
+
+print(fc)
+print(fc_adj)
+
+data = {
+    'branch': br,
+    'commit_message': 'adjust version of omnibenchmark in requirements.txt: ' + dt_string,
+    'actions': [
+        {
+            'action': 'update',
+            'file_path': cy,
+            'content': fc_adj, # NOTE: local file
+
+        }
+    ]
+}
+
+commit = p.commits.create(data)
+print(commit.id)
+```
+
+
+## Look at the last 3 commits
+
+```{python}
+comms = p.commits.list(ref_name=br, get_all=True)[0:3]
+
+for i in range(len(comms)):
+    c = comms[i]
+    print(c.short_id, "\t", c.message)
+
+        
+print(p.http_url_to_repo)
+```
+
