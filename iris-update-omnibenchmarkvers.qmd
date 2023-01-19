@@ -1,0 +1,203 @@
+---
+title: "commit-file"
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# R libs
+
+```{r}
+library(reticulate)
+library(DT)
+use_python("~/opt/miniconda3/envs/omb/bin/python3.9")
+```
+
+## Python imports
+
+```{python}
+import os
+import base64
+import gitlab
+import pandas as pd
+import re
+from dfply import *
+import yaml
+from datetime import datetime
+```
+
+
+## Read private token
+
+N.B.: gitlab token must be stored (alone) in a file called `.token`.
+
+```{python}
+tf = open(".token", "r")
+token = tf.read().rstrip()
+tf.close()
+
+n = len(token)
+print(token[0:5], "...", token[n-5:n], sep="")
+```
+
+## Vars to define what we want to scrape
+
+
+```{python}
+target = "requirements.txt"
+target_path = "."
+search_terms = ["api_test2"]
+target_branches = ["master","main"]
+target_pkg = "omnibenchmark"
+new_ver = "0.0.1"
+
+
+# datetime object containing current date and time
+now = datetime.now()
+print("now =", now)
+dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
+# https://www.programiz.com/python-programming/datetime/current-datetime
+```
+
+
+## Grab a set of projects according to search terms
+
+```{python}
+gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
+print(gl.api_url)
+
+projects = []
+for term in search_terms:
+    projects.extend(gl.projects.list(get_all=True, search=term,
+                                     order_by="last_activity_at", per_page=100))
+
+print(len(projects))
+
+# get unique list
+projects_uniq = []
+for item in projects:
+    if item not in projects_uniq:
+        projects_uniq.append(item)
+
+print(len(projects_uniq))
+```
+
+## Grab stuff out of every project
+
+In this example, look only into `iris` projects, parse the `requirements.txt` file and pull out versions.
+
+```{python}
+z = [None] * len(projects_uniq)
+
+for i in range(len(projects_uniq)):
+    p = projects_uniq[i]
+    bs = p.branches.list(get_all=True)
+    bb = [b.name for b in bs if b.name in target_branches]
+    if len(bb)==0:
+        continue
+    br = bb[0]
+    fs = p.repository_tree(path=target_path, ref=br, all=True)
+    cy = [f["path"] for f in fs if f["path"] == target]
+    cy = ''.join(cy)
+    url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
+    url = re.sub(".git$","", url)
+    ver=""; fc = ""
+    if(cy == target):
+        f = p.files.get(file_path=target, ref=br)
+        fc = base64.b64decode(f.content).decode("utf-8")
+        fc = fc.replace('\\n', '\n')
+        pkgs_list = fc.split("\n")
+        ver = [pkg.split("==") for pkg in pkgs_list if target_pkg in pkg]
+        # ver = [pkg.split(r"[>=]=") for pkg in pkgs_list if target_pkg in pkg]
+        if(len(ver)>0):
+            ver = ver[0][1]
+        else:
+            ver = ""
+    z[i] = [p.id, url, br, ver, fc]
+
+# get clean list
+z_clean = []
+for item in z:
+    if item is not None:
+        z_clean.append(item)
+
+print(len(z_clean))
+```
+
+## Format into a pandas DataFrame and have a look
+
+```{python}
+pd.options.display.max_colwidth = 60
+df = pd.DataFrame(z_clean, columns=['id','url_snippet','branch', 'omnibenchmark_version',
+                  'requirements_list'])
+print(df >> arrange(X.omnibenchmark_version))
+```
+
+
+## Tabular summary
+
+```{r}
+DT::datatable(py$df)
+```
+
+## Update all the `requirements.txt` files
+
+```{python}
+df = df[df['omnibenchmark_version']!=""]
+
+# function to manipulate version numbers
+def update_version(fc, target_pkg, new_val):
+    fcs = [pkg.split("==") for pkg in fc.split("\n")]
+    for i in range(len(fcs)):
+      if(fcs[i][0] == target_pkg):
+        fcs[i][1] = new_val
+    fc_adj = "\n".join(["==".join(ii) for ii in fcs])
+    return(fc_adj)
+
+# function to create JSON commit info
+def create_commit_JSON(action, content, path, msg, branch):
+    data = {
+        'branch': branch,
+        'commit_message': msg,
+        'actions': [
+            {
+                'action': action,
+                'file_path': path,
+                'content': content, # NOTE: local file
+            }
+        ]
+    }
+    return(data)
+
+# loop through repos, modify version
+for ii in range(len(df)):
+    p = projects_uniq[df.index[ii]] # get project from earlier list
+    br = df['branch'][ii]
+    f = p.files.get(file_path=target, ref=br)
+    fc = base64.b64decode(f.content).decode("utf-8")
+    fc_adj = update_version(fc, target_pkg, new_val=new_ver)
+    com = create_commit_JSON('update', fc_adj, target,
+                             "update '" + target_pkg + "' to: " + new_ver,
+                             br)
+    commit = p.commits.create(com)
+    print(p.path_with_namespace, "\t", commit.id)
+
+```
+
+
+## sessionInfo-python
+
+```{python}
+import session_info
+session_info.show()
+```
+
+
+## sessionInfo-R
+
+```{r}
+sessionInfo()
+```
+
