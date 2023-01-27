@@ -48,10 +48,9 @@ print(token[0:5], "...", token[n-5:n], sep="")
 ```{python}
 target = "requirements.txt"
 target_path = "."
-search_terms = ["api_test2"]
+search_term = ["api_test2"]
 target_branches = ["master","main"]
 target_pkg = "omnibenchmark"
-new_ver = "0.0.1"
 
 
 # datetime object containing current date and time
@@ -68,136 +67,126 @@ dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
 gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
 print(gl.api_url)
 
-projects = []
-for term in search_terms:
-    projects.extend(gl.projects.list(get_all=True, search=term,
-                                     order_by="last_activity_at", per_page=100))
-
-print(len(projects))
-
-# get unique list
-projects_uniq = []
-for item in projects:
-    if item not in projects_uniq:
-        projects_uniq.append(item)
-
-print(len(projects_uniq))
+p = gl.projects.list(get_all=True, search=search_term,
+                     order_by="last_activity_at", per_page=100)
+                              
+len(p)
+p = p[0]
 ```
 
 ## Grab stuff out of every project
 
-In this example, look only into `iris` projects, parse the `requirements.txt` file and pull out versions.
+In this example, look only into a test repo, delete a file, add a file (from local), update a file, look at list of commits.
 
 ```{python}
-z = [None] * len(projects_uniq)
 
-for i in range(len(projects_uniq)):
-    p = projects_uniq[i]
-    bs = p.branches.list(get_all=True)
-    bb = [b.name for b in bs if b.name in target_branches]
-    if len(bb)==0:
-        continue
-    br = bb[0]
-    fs = p.repository_tree(path=target_path, ref=br, all=True)
-    cy = [f["path"] for f in fs if f["path"] == target]
-    cy = ''.join(cy)
-    url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
-    url = re.sub(".git$","", url)
-    ver=""; fc = ""
-    if(cy == target):
-        f = p.files.get(file_path=target, ref=br)
-        fc = base64.b64decode(f.content).decode("utf-8")
-        fc = fc.replace('\\n', '\n')
-        pkgs_list = fc.split("\n")
-        ver = [pkg.split("==") for pkg in pkgs_list if target_pkg in pkg]
-        # ver = [pkg.split(r"[>=]=") for pkg in pkgs_list if target_pkg in pkg]
-        if(len(ver)>0):
-            ver = ver[0][1]
-        else:
-            ver = ""
-    z[i] = [p.id, url, br, ver, fc]
+bs = p.branches.list(get_all=True)
+bb = [b.name for b in bs if b.name in target_branches]
+br = bb[0]
 
-# get clean list
-z_clean = []
-for item in z:
-    if item is not None:
-        z_clean.append(item)
+fs = p.repository_tree(path=target_path, ref=br, all=True)
 
-print(len(z_clean))
+
+cy = [f["path"] for f in fs if f["path"] == target]
+cy = ''.join(cy)
+
+url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
+url = re.sub(".git$","", url)
+
+
+f = p.files.get(file_path=target, ref=br)
+fc = base64.b64decode(f.content).decode("utf-8")
+
+print(fc)
 ```
 
-## Format into a pandas DataFrame and have a look
+
+
+<!-- ## Try deleting a file -->
+
+<!-- ```{python} -->
+<!-- data = { -->
+<!--     'branch': br, -->
+<!--     'commit_message': 'delete README.md: ' + dt_string, -->
+<!--     'actions': [ -->
+<!--         { -->
+<!--             'action': 'delete', -->
+<!--             'file_path': 'README.md', -->
+<!--         } -->
+<!--     ] -->
+<!-- } -->
+
+<!-- commit = p.commits.create(data) -->
+<!-- print(commit.id) -->
+<!-- ``` -->
+
+
+<!-- ## Try adding a file -->
+
+<!-- ```{python} -->
+<!-- data = { -->
+<!--     'branch': br, -->
+<!--     'commit_message': 'add back README.md: ' + dt_string, -->
+<!--     'actions': [ -->
+<!--         { -->
+<!--             'action': 'create', -->
+<!--             'file_path': 'README.md', -->
+<!--             'content': open('README.md').read(), # NOTE: local file -->
+<!--         } -->
+<!--     ] -->
+<!-- } -->
+
+<!-- commit = p.commits.create(data) -->
+<!-- print(commit.id) -->
+<!-- ``` -->
+
+
+## Try updating a file
 
 ```{python}
-pd.options.display.max_colwidth = 60
-df = pd.DataFrame(z_clean, columns=['id','url_snippet','branch', 'omnibenchmark_version',
-                  'requirements_list'])
-print(df >> arrange(X.omnibenchmark_version))
+print(cy)
+
+# manipulate version numbers
+fcs = [pkg.split("==") for pkg in fc.split("\n")]
+
+for i in range(len(fcs)):
+    print(fcs[i][0])
+    if(fcs[i][0] == target_pkg):
+        fcs[i][1] = '0.0.39'
+      
+fc_adj = "\n".join(["==".join(ii) for ii in fcs])
+
+print(fc)
+print(fc_adj)
+
+data = {
+    'branch': br,
+    'commit_message': 'adjust version of omnibenchmark in requirements.txt: ' + dt_string,
+    'actions': [
+        {
+            'action': 'update',
+            'file_path': cy,
+            'content': fc_adj, # NOTE: local file
+
+        }
+    ]
+}
+
+commit = p.commits.create(data)
+print(commit.id)
 ```
 
 
-## Tabular summary
-
-```{r}
-DT::datatable(py$df)
-```
-
-## Update all the `requirements.txt` files
+## Look at the last 3 commits
 
 ```{python}
-df = df[df['omnibenchmark_version']!=""]
+comms = p.commits.list(ref_name=br, get_all=True)[0:3]
 
-# function to manipulate version numbers
-def update_version(fc, target_pkg, new_val):
-    fcs = [pkg.split("==") for pkg in fc.split("\n")]
-    for i in range(len(fcs)):
-      if(fcs[i][0] == target_pkg):
-        fcs[i][1] = new_val
-    fc_adj = "\n".join(["==".join(ii) for ii in fcs])
-    return(fc_adj)
+for i in range(len(comms)):
+    c = comms[i]
+    print(c.short_id, "\t", c.message)
 
-# function to create JSON commit info
-def create_commit_JSON(action, content, path, msg, branch):
-    data = {
-        'branch': branch,
-        'commit_message': msg,
-        'actions': [
-            {
-                'action': action,
-                'file_path': path,
-                'content': content, # NOTE: local file
-            }
-        ]
-    }
-    return(data)
-
-# loop through repos, modify version
-for ii in range(len(df)):
-    p = projects_uniq[df.index[ii]] # get project from earlier list
-    br = df['branch'][ii]
-    f = p.files.get(file_path=target, ref=br)
-    fc = base64.b64decode(f.content).decode("utf-8")
-    fc_adj = update_version(fc, target_pkg, new_val=new_ver)
-    com = create_commit_JSON('update', fc_adj, target,
-                             "update '" + target_pkg + "' to: " + new_ver,
-                             br)
-    commit = p.commits.create(com)
-    print(p.path_with_namespace, "\t", commit.id)
-
-```
-
-
-## sessionInfo-python
-
-```{python}
-import session_info
-session_info.show()
-```
-
-
-## sessionInfo-R
-
-```{r}
-sessionInfo()
+        
+print(p.http_url_to_repo)
 ```
 
