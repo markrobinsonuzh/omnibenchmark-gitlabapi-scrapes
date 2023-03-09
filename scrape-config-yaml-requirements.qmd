@@ -1,0 +1,234 @@
+---
+title: "scrape-config-yaml"
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# R libs
+
+```{r}
+#| warning: false
+#| message: false
+library(reticulate)
+library(DT)
+library(digest)
+library(yaml)
+library(dplyr)
+(hash <- digest(Sys.time()))
+use_python("~/opt/miniconda3/envs/omb/bin/python3.9")
+
+# https://stackoverflow.com/questions/12193779/how-to-write-trycatch-in-r
+my_read_yaml <- function(u) {
+  out <- tryCatch(
+        {
+            read_yaml(u)
+        },
+        error=function(cond) {
+            return(as.character(cond))
+        })
+        # ,
+        # warning=function(cond) {
+        #     #message(cond)
+        #     # Choose a return value in case of warning
+        #     return(NULL)
+        # })
+}
+
+
+yaml_to_df <- function(u, verbose=FALSE) {
+  if(verbose) print(u)
+  ry <- my_read_yaml(u)
+  if(is.null(ry))
+    ry$data <- NA
+  if(is.character(ry))
+    ry <- list(data.name=ry)
+  ry$inputs$files <- NULL
+  ry$parameter <- NULL
+  ry$outputs$file_mapping <- NULL
+  
+  if (is.null(ry$outputs$files))
+    ry$outputs$files <- NULL
+  if (is.null(ry$inputs$prefix))
+    ry$inputs$prefix <- NULL
+  if (!is.null(ry$inputs$filter_names))
+    ry$inputs$filter_names <- paste(ry$inputs$filter_names, collapse = ";")
+  if (!is.null(ry$inputs$keywords))
+    ry$inputs$keywords <- paste(ry$inputs$keywords, collapse = ";")
+  if (!is.null(ry$inputs$prefix$corrected_dim_file))
+    ry$inputs$prefix$corrected_dim_file <- paste(ry$inputs$prefix$corrected_dim_file, collapse = ";")
+  
+  ss <- strsplit(u, "/")[[1]]
+  data.frame(namespace=paste(ss[2:(length(ss)-3)], collapse="/"),
+             dir=ss[length(ss)-2], as.data.frame(ry))
+
+}
+
+requirements_to_df <- function(u, verbose=FALSE, search_term = "omnibenchmark") {
+  if(verbose) print(u)
+  rl <- readLines(u)
+  g <- grepl(search_term, rl)
+  keep <- rl[g]
+  if(length(keep)>1)
+    keep <- paste(keep, collapse = ";")
+  if(length(keep)==0)
+    keep <- NA
+  ss <- strsplit(u, "/")[[1]]
+  # 1 - hash
+  # last two are 'src' and 'config.yaml'
+  data.frame(namespace=paste(ss[2:(length(ss)-2)], collapse = "/"),
+             dir=ss[length(ss)-1], omni=keep)
+}
+```
+
+## Python imports
+
+```{python}
+import os
+import base64
+import gitlab
+import pandas as pd
+import re
+from dfply import *
+import yaml
+```
+
+
+## Read private token
+
+N.B.: gitlab token must be stored (alone) in a file called `.token`.
+
+```{python}
+tf = open(".token", "r")
+token = tf.read().rstrip()
+tf.close()
+
+n = len(token)
+print(token[0:5], "...", token[n-5:n], sep="")
+```
+
+## Vars to define what we want to scrape
+
+
+```{python}
+targets = ["src/config.yaml", "requirements.txt"]
+target_paths = ["src","."]
+target_branches = ["master","main"]
+# group_search = ["spatial-clustering"]
+group_search = ['bettr_hackathon', 'dashboard_hackathon', 'iris_example', 'omb_benchmarks', 'omni_batch', 'omni_batch', 'omni-batch-py', 'omnibenchmark', 'omni_clustering', 'omni_clustering', 'omni_data', 'omni_hackathon', 'omni_metric', 'spatial-clustering']
+
+```
+
+
+## Grab a set of projects according to search terms
+
+```{python}
+gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
+
+ns = gl.groups.list() # get namespaces
+[x.name for x in ns]
+gs = [x for x in ns if x.name in group_search]
+
+projects = []
+for g in gs:
+    projects.extend(g.projects.list(get_all=True))
+
+print(len(projects))
+```
+
+## Grab stuff out of every project, store locally
+
+In this example, look only into certain branches, the files specified in `targets` and here we simply make a local copy in the Python part. This will be later parsed in the R part below
+
+```{python}
+def make_dir_if_not_exist(fp):
+    isExist = os.path.exists(fp)
+    if not isExist:
+        os.makedirs(fp)
+
+make_dir_if_not_exist(r.hash)
+
+z = [None] * len(projects)
+
+
+for i in range(len(projects)):
+    pr = gl.projects.get(projects[i].id)
+    url = pr.web_url.replace("https://renkulab.io/gitlab/","")
+    z[i] = [pr.id, url]
+    bs = pr.branches.list(get_all=True)
+    bb = [b.name for b in bs if b.name in target_branches]
+    if len(bb)==0:
+        continue
+    br = bb[0]
+    stub = r.hash
+    for subdirs in url.split("/"):
+        stub = stub + "/" + subdirs
+        make_dir_if_not_exist(stub)
+    for j in range(len(targets)):
+        fs = pr.repository_tree(path = target_paths[j], all=True)
+        if len(fs)==0:
+            continue
+        cy = [f["path"] for f in fs if f["path"] == targets[j]]
+        if len(cy)==0:
+            continue
+        f = pr.files.get(file_path=targets[j], ref=br)
+        fc = base64.b64decode(f.content).decode("utf-8")
+        stubd = stub + "/" + target_paths[j]
+        make_dir_if_not_exist(stubd)
+        with open(stub + "/" + targets[j], "w") as f:
+          dummy = f.write(fc)
+
+```
+
+
+## Format into a pandas DataFrame
+
+```{python}
+df = pd.DataFrame(z, columns=['id','web_url'])
+# df
+# df.to_csv("omni_repos.csv", index=False)
+# df = df >> mask(X.configyaml == target) >> drop(X.configyaml)
+# print(df >> arrange(X.benchmark_name, X.data_keywords))
+```
+
+```{r}
+py$df$namespace <- dirname(py$df$web_url)
+py$df$dir <- basename(py$df$web_url)
+#py$df$web_url <- NULL
+```
+
+
+# Parse stuff out in R
+
+
+```{r}
+#| warning: false
+#| message: false
+py$targets
+fs <- list.files(hash, recursive = TRUE)
+fs <- sapply(py$targets, function(u) fs[grep(u,fs)])
+
+# fs
+
+dfs <- lapply(file.path(hash, fs$`src/config.yaml`),
+              yaml_to_df) %>% bind_rows %>%
+  select(namespace, dir, data.name, data.keywords, script, outputs.template,
+         template, benchmark_name, inputs.keywords, inputs.filter_names)
+
+# stopifnot(length(fs[[1]])==nrow(dfs))
+
+txts <- lapply(file.path(hash, fs$`requirements.txt`),
+               requirements_to_df) %>% bind_rows
+
+# stopifnot(length(fs[[2]])==nrow(txts))
+
+
+df <- py$df %>% left_join(dfs) %>% left_join(txts)
+DT::datatable(df)
+
+write.csv(df, "repos.csv", row.names = FALSE)
+
+```
+

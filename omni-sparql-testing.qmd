@@ -1,0 +1,102 @@
+---
+title: "omni-sparql-testing"
+format:
+  html:
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# R libs
+
+```{r}
+library(reticulate)
+library(DT)
+use_python("~/opt/miniconda3/envs/omb/bin/python3.9")
+```
+
+## Python imports, vars
+
+```{python}
+import omniSparql as omni
+import pandas as pd
+```
+
+
+# query on specific file, extract some stuff
+
+```{python}
+TRIPLESTORE_URL = "http://imlspenticton.uzh.ch/spatial_clustering_sparql"
+FILES = ["data/metric-ami/metric-ami__normalization_scuttle_7d403__dataset_Andersson21__d_30__k_None__kNN_30__lambda_0_method_BANKSY_d0a14__met.json"]
+
+## get a query
+query = omni.getSparqlQuery.activity_from_file(FILES[0])
+## run the query 
+out = omni.query_from_sparql(query, URL = TRIPLESTORE_URL)
+
+len(out)
+out[0].keys()
+
+z = [None] * len(out)
+
+for i in range(len(out)):
+  o = out[i]
+  ac = o['activity']['value'].replace("https://renkulab.io/activities/","")
+  z[i] = [o['query']['value'], ac, o['startTime']['value'], o['endTime']['value']]
+
+```
+
+
+```{python}
+df = pd.DataFrame(z, columns=['file','activity','start', 'end'])
+```
+
+
+```{r}
+DT::datatable(py$df)
+```
+
+
+# query on project, extract some stuff
+
+```{python}
+TRIPLESTORE_URL = "http://imlspenticton.uzh.ch/omni_iris_sparql"
+FILES = ["data/metric-ami/metric-ami__normalization_scuttle_7d403__dataset_Andersson21__d_30__k_None__kNN_30__lambda_0_method_BANKSY_d0a14__met.json"]
+
+## get a query
+q = omni.getSparqlQuery.imported_datasets_from_project(project_name='iris_accuracy')
+print(q)
+
+## run the query 
+out = omni.query_from_sparql(q, URL = TRIPLESTORE_URL)
+
+len(out)
+out[0].keys()
+
+z = [None] * len(out)
+
+for i in range(len(out)):
+  o = out[i]
+  z[i] = [o['query']['value'], o['full_name']['value'],
+          o['keyword']['value'], o['dateCreated']['value'],
+          o['descr']['value'], 
+          o['originID']['value'].replace("https://renkulab.io/datasets/","")]
+
+```
+
+
+```{python}
+df = pd.DataFrame(z, columns=['file','full_name','keyword', 
+                              'date', 'description', 'dataset'])
+```
+
+
+```{r}
+DT::datatable(py$df)
+
+with(py$df, table(full_name, keyword))
+nrow(py$df)
+nrow(unique(py$df))
+
+```
+
