@@ -80,21 +80,23 @@ for i in range(len(out)):
   z[i] = [o['query']['value'], o['full_name']['value'],
           o['keyword']['value'], o['dateCreated']['value'],
           o['descr']['value'], 
-          o['originID']['value'].replace("https://renkulab.io/datasets/","")]
+          o['originID']['value'].replace("https://renkulab.io/datasets/",""),
+          o['creator']['value']]
 
 ```
 
 
 ```{python}
 df = pd.DataFrame(z, columns=['file','full_name','keyword', 
-                              'date', 'description', 'dataset'])
+                              'date', 'description', 'dataset', 'creator'])
+                              
 ```
 
 
 ```{r}
 DT::datatable(py$df)
 
-with(py$df, table(full_name, keyword))
+with(py$df, table(keyword, creator))
 nrow(py$df)
 nrow(unique(py$df))
 
