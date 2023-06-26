@@ -11,16 +11,19 @@ namespace_id = '72048'
 # Leave empty [] if the modifications needs to affect all projects in that namespace id
 search_term = []
 
+# Commit message
+commit_msg = "fix typo to run_update"
+
 ## Vars to define what we want to scrape
-target = "requirements.txt"
+target = ".gitlab-ci.yml" # requirements.txt,..
 target_path = "."
 target_branches = ["master","main"]
 
-# Package to update (if target == requriements)
-target_pkg = "omniValidator"
+## Search term in the target file
+target_search = 'run_udpate'
+## Replacement to bring to the search term
+target_modified = 'run_update'
 
-# New version for the specified package
-new_version = '0.0.19'
 
 # Dry run which will show the projects identified by the search
 # and show the modifications that it will bring.
@@ -36,12 +39,30 @@ from dfply import *
 import yaml
 from datetime import datetime
 import requests
+import difflib
+from difflib import ndiff
+import sys as sys
 
+
+## utils function to print context around changes
+def print_context(string, pattern):
+    lines = string.split("\n")
+    print("---[TRUNCATED] -----")
+    for i, line in enumerate(lines):
+        if pattern in line:
+            start_index = max(0, i - 5)
+            end_index = min(len(lines), i + 6)
+            context_lines = lines[start_index:end_index]
+            print("\n".join(context_lines))
+            break
+    print("---[TRUNCATED] -----")
 
 
 # GET THE PROJECT FROM NAMESPACE ID -----------
 # Set your GitLab instance URL and namespace ID
 
+if search_term == ['']: 
+    sys.exit('search_term not empty ([''] instead of [])')
 if len(search_term) == 0: 
     # Set the API endpoint
     api_url = f'{gitlab_url}/api/v4/projects'
@@ -80,6 +101,7 @@ if len(search_term) == 0:
     print('Detected projects:')
     print(search_term)
 
+
 # CREATE COMMITS---------------------------
 
 # N.B.: gitlab token must be stored (alone) in a file called `.token`.
@@ -87,14 +109,14 @@ tf = open(".token", "r")
 token = tf.read().rstrip()
 tf.close()
 n = len(token)
-print("Token:")
+print("Token (truncated):")
 print(token[0:5], "...", token[n-5:n], sep="")
 
 
 
 # datetime object containing current date and time
 now = datetime.now()
-print("now =", now)
+print("\nnow =", now)
 dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
 
 ## Grab a set of projects according to search terms
@@ -107,7 +129,7 @@ for SEARCH in search_term:
                                 
     len(p)
     p = p[0]
-    print("\nReading project:")
+    print("\n\nReading project:")
     print("project_id:"+ str(p.get_id()) + "    namespace_name:"+p.name_with_namespace )
     bs = p.branches.list(get_all=True)
     bb = [b.name for b in bs if b.name in target_branches]
@@ -127,27 +149,32 @@ for SEARCH in search_term:
 
     f = p.files.get(file_path=target, ref=br)
     fc = base64.b64decode(f.content).decode("utf-8")
-    # manipulate version numbers
-    fcs = [pkg.split("==") for pkg in fc.split("\n")]
 
-    for i in range(len(fcs)):
-        print(fcs[i][0])
-        if(fcs[i][0] == target_pkg):
-            fcs[i][1] = new_version
-        
-    fc_adj = "\n".join(["==".join(ii) for ii in fcs])
+    fc_adj = re.sub(target_search, target_modified, fc)
 
-    print("Actual requirements:")
-    print(fc)
-    print("Modified requirements:")
-    print(fc_adj)
+    # Show modifications (and continue, if none)
     if fc == fc_adj: 
         print("Nothing to change, continuing to next one...")
         continue
+    diff = ndiff(fc_adj.splitlines(keepends=True),
+            fc.splitlines(keepends=True))
+    diff_out = ''.join(diff)
+    pattern = r"\?\s*[-+]"
+
+    diff_lines = re.findall(pattern, diff_out)
+    x = [i for i in range(1, (len(diff_lines) )) if i%2!=0]
+    print("MODIFICATIONS TO:\n"+f.file_name)
+    for xi in x: 
+        print_context(diff_out, diff_lines[xi])
+
+    #print("Actual file (truncated):")
+    #print(fc)
+    #print("Modified file (truncated):")
+    #print(fc_adj)
 
     data = {
         'branch': br,
-        'commit_message': 'adjust version of '+ target_pkg + ' in ' +target + ': ' + dt_string,
+        'commit_message': '[bulk update]:' + commit_msg,
         'actions': [
             {
                 'action': 'update',
