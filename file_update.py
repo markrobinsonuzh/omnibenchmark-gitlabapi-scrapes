@@ -100,6 +100,31 @@ def replace_file_content(
     return new_file_content
 
 
+def commit_file(
+    project: any,
+    file_path: str,
+    content: str,
+    branch: str,
+    action: str = "update",
+    commit_msg: str = "new file content",
+):
+    if action not in ["update", "add"]:
+        raise ValueError("Chose one of 'update' or 'add' as commit action.")
+    data = {
+        "branch": branch,
+        "commit_message": "[bulk update]:" + commit_msg,
+        "actions": [
+            {
+                "action": action,
+                "file_path": file_path,
+                "content": content,
+            }
+        ],
+    }
+    commit = project.commits.create(data)
+    print(f"Commit ID: \n {commit.id}")
+
+
 def bulk_file_update(
     file_path: Union[List, str],
     replace_str: str,
@@ -118,6 +143,8 @@ def bulk_file_update(
         git_url=git_url,
         token=token,
     )
+
+    print(f'Checking {len(projects)} projects for file updates.')
 
     for project in projects:
         print("\n\nReading project:")
@@ -154,16 +181,51 @@ def bulk_file_update(
                 print_context(differences, diff_lines[xi])
 
             if not dry_run:
-                data = {
-                    "branch": file.ref,
-                    "commit_message": "[bulk update]:" + commit_msg,
-                    "actions": [
-                        {
-                            "action": "update",
-                            "file_path": file.file_path,
-                            "content": file_mod,
-                        }
-                    ],
-                }
-                commit = project.commits.create(data)
-                print(f"Commit ID: \n {commit.id}")
+                commit_file(
+                    project=project,
+                    file_path=file.file_path,
+                    content=file_mod,
+                    branch=file.ref,
+                    commit_msg=commit_msg,
+                )
+
+
+def bulk_file_add(
+    file_path: Union[List, str],
+    projects_with_namespace: Optional[List[str]] = None,
+    namespace: Optional[str] = None,
+    dry_run: bool = True,
+    commit_msg: str = "modify file content",
+    git_url: str = "https://renkulab.io/gitlab",
+    token: Optional[str] = None,
+    target_branches: Union[List[str], str] = ["main", "master"],
+):
+    projects = get_projects(
+        projects_with_namespace=projects_with_namespace,
+        namespace=namespace,
+        git_url=git_url,
+        token=token,
+    )
+
+    print(f'Adding {file_path} to {len(projects)} projects.')
+
+    for project in projects:
+        print("\n\nReading project:")
+        print(
+            "project_id:"
+            + str(project.get_id())
+            + "    namespace_name:"
+            + project.name_with_namespace
+        )
+
+        for branch in target_branches:
+            print("ADD NEW FILE:\n" + file_path + "\n at branch: " + branch)
+            if not dry_run:
+                commit_file(
+                    project=project,
+                    file_path=file_path,
+                    content=open(file_path).read(),
+                    branch=branch,
+                    action="add",
+                    commit_msg=commit_msg,
+                )
