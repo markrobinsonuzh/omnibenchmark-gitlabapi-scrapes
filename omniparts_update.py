@@ -4,7 +4,7 @@
 # N.B.: gitlab token must be stored (alone) in a file called `.token`.
 
 # Renku gitlab URL
-gitlab_url = 'https://renkulab.io/gitlab/'
+gitlab_url = 'https://gitlab.renkulab.io/'
 # namespace ID of the omnibenchmark subgroup to look at
 namespace_id = '72048'
 # ...alternatively, (list of) projects to look at.
@@ -12,22 +12,22 @@ namespace_id = '72048'
 search_term = []
 
 # Commit message
-commit_msg = "fix typo to run_update"
+commit_msg = "omb version update"
 
 ## Vars to define what we want to scrape
-target = ".gitlab-ci.yml" # requirements.txt,..
+target = ".gitlab-ci.yml" 
 target_path = "."
 target_branches = ["master","main"]
 
 ## Search term in the target file
-target_search = 'run_udpate'
+target_search = '/builds/gitlab/'
 ## Replacement to bring to the search term
-target_modified = 'run_update'
+target_modified = '/builds/'
 
 
 # Dry run which will show the projects identified by the search
 # and show the modifications that it will bring.
-dry_run = True
+dry_run = False
 
 ## -----------------------------------------
 import os
@@ -38,7 +38,6 @@ import re
 from dfply import *
 import yaml
 from datetime import datetime
-import requests
 import difflib
 from difflib import ndiff
 import sys as sys
@@ -58,49 +57,6 @@ def print_context(string, pattern):
     print("---[TRUNCATED] -----")
 
 
-# GET THE PROJECT FROM NAMESPACE ID -----------
-# Set your GitLab instance URL and namespace ID
-
-if search_term == ['']: 
-    sys.exit('search_term not empty ([''] instead of [])')
-if len(search_term) == 0: 
-    # Set the API endpoint
-    api_url = f'{gitlab_url}/api/v4/projects'
-
-    # Make the API request
-    response = requests.get(api_url, params={'namespace_id': namespace_id})
-
-    # Make the initial API request
-    params = {'namespace_id': namespace_id, 'page': 1, 'per_page': 100}
-    response = requests.get(api_url, params=params)
-
-    # Check if the request was successful
-    if response.status_code == 200:
-        projects = response.json()
-        projects = [project for project in projects if project['namespace']['id'] == int(namespace_id)]
-        project_names = [project['name'] for project in projects]
-
-        # Retrieve subsequent pages until the maximum number of pages is reached
-        page = 2  # Start with the second page
-        max_pages = 20  # Set the maximum number of pages to retrieve (adjust as needed)
-        while 'next' in response.links and page <= max_pages:
-            response = requests.get(response.links['next']['url'], params=params)
-            if response.status_code == 200:
-                projects = response.json()
-                projects = [project for project in projects if project['namespace']['id'] == int(namespace_id)]
-                project_names.extend([project['name'] for project in projects])
-                page += 1
-            else:
-                print(f"Error: {response.status_code} - {response.text}")
-                break
-
-    else:
-        print(f"Error: {response.status_code} - {response.text}")
-
-    search_term = list(set(project_names))
-    print('Detected projects:')
-    print(search_term)
-
 
 # CREATE COMMITS---------------------------
 
@@ -113,6 +69,20 @@ print("Token (truncated):")
 print(token[0:5], "...", token[n-5:n], sep="")
 
 
+if search_term == ['']: 
+    sys.exit('search_term not empty ([''] instead of [])')
+if len(search_term) == 0: 
+    gl = gitlab.Gitlab(url="https://gitlab.renkulab.io", private_token=token)
+    # query project from namespace group
+    group = gl.groups.get(namespace_id, lazy=True)
+    group.projects.list(get_all = True)
+
+    proj_iterat = group.projects.list(iterator = True)
+    projects = [x.attributes for x in proj_iterat]
+    projects = [x['name'] for x in projects]
+    print('Detected projects:')
+    print(projects)
+
 
 # datetime object containing current date and time
 now = datetime.now()
@@ -120,10 +90,10 @@ print("\nnow =", now)
 dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
 
 ## Grab a set of projects according to search terms
-gl = gitlab.Gitlab(url='https://renkulab.io/gitlab',private_token=token)
-print(gl.api_url)
+#gl = gitlab.Gitlab(url='https://gitlab.renkulab.io',private_token=token)
+#print(gl.api_url)
 
-for SEARCH in search_term: 
+for SEARCH in projects: 
     p = gl.projects.list(get_all=True, search=SEARCH,
                         order_by="last_activity_at", per_page=100)
                                 
@@ -143,7 +113,7 @@ for SEARCH in search_term:
     cy = [f["path"] for f in fs if f["path"] == target]
     cy = ''.join(cy)
 
-    url = p.http_url_to_repo.replace("https://renkulab.io/gitlab/","")
+    url = p.http_url_to_repo.replace("https://gitlab.renkulab.io/","")
     url = re.sub(".git$","", url)
 
 
@@ -160,12 +130,18 @@ for SEARCH in search_term:
             fc.splitlines(keepends=True))
     diff_out = ''.join(diff)
     pattern = r"\?\s*[-+]"
+    #pattern = r"(\+|-).*\n(\+|-)"
 
     diff_lines = re.findall(pattern, diff_out)
-    x = [i for i in range(1, (len(diff_lines) )) if i%2!=0]
-    print("MODIFICATIONS TO:\n"+f.file_name)
-    for xi in x: 
-        print_context(diff_out, diff_lines[xi])
+    if diff_lines == []: 
+        print(diff_out)
+    else: 
+        x = [i for i in range(1, (len(diff_lines) )) if i%2!=0]
+        if x == []: 
+            x = range(0, 1)
+        print("MODIFICATIONS TO:\n"+f.file_name)
+        for xi in x: 
+            print_context(diff_out, diff_lines[xi])
 
     #print("Actual file (truncated):")
     #print(fc)
