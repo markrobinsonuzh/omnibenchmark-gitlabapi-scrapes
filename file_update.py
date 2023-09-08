@@ -25,7 +25,7 @@ def print_context(string, pattern):
 def get_projects(
     projects_with_namespace: Optional[List[str]] = None,
     namespace: Optional[str] = None,
-    git_url: str = "https://renkulab.io/gitlab",
+    git_url: str = "https://gitlab.renkulab.io",
     token: Optional[str] = None,
 ) -> List:
     projects: List = []
@@ -133,7 +133,7 @@ def bulk_file_update(
     namespace: Optional[str] = None,
     dry_run: bool = True,
     commit_msg: str = "modify file content",
-    git_url: str = "https://renkulab.io/gitlab",
+    git_url: str = "https://gitlab.renkulab.io",
     token: Optional[str] = None,
     target_branches: Union[List[str], str] = ["main", "master"],
 ):
@@ -196,7 +196,7 @@ def bulk_file_add(
     namespace: Optional[str] = None,
     dry_run: bool = True,
     commit_msg: str = "modify file content",
-    git_url: str = "https://renkulab.io/gitlab",
+    git_url: str = "https://gitlab.renkulab.io",
     token: Optional[str] = None,
     target_branches: Union[List[str], str] = ["main", "master"],
 ):
